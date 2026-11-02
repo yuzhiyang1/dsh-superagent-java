@@ -1,0 +1,7 @@
+This is an independent Java 21 learning-oriented port, not an official DeepSeek product.
+Based on deepseek-ai/dsh-superagent-prototype:
+https://github.com/deepseek-ai/dsh-superagent-prototype
+Pinned upstream commit: 6337fc823ce20251c8de8085948165c81aaa701e
+Upstream copyright (c) 2026 DeepSeek Harness Team, MIT License.
+The original MIT notice and license are preserved in LICENSE.
+The Java implementation re-expresses core concepts and selected adapters; it is not a line-by-line translation or a compatible DSH plugin.
