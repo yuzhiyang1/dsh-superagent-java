@@ -1,0 +1,53 @@
+{
+  "note": "Public npm archives inspected, SHA-512 verified, never executed. The coding persona template is configured in the pinned dsh-superagent cordis.patch.yml; dsh-persona renders it, dsh-system-prompt is its registry.",
+  "packages": [
+    {
+      "name": "@deepseek-ai/dsh-system-prompt",
+      "version": "0.2.1-alpha.2",
+      "license": "MIT",
+      "repository": {
+        "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+        "type": "git",
+        "directory": "packages/core/system-prompt"
+      },
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh-system-prompt/-/dsh-system-prompt-0.2.1-alpha.2.tgz",
+      "integrity": "sha512-3UqSuNpaTQWRSUEE1ygCm83dcJPkhmssmwUTRGB8jufFc3ib/7i6ktqhZZNSUQrrr/d/FQ0dsQ5wo9l/iJSKWA=="
+    },
+    {
+      "name": "@deepseek-ai/dsh-persona",
+      "version": "0.2.1-alpha.2",
+      "license": "MIT",
+      "repository": {
+        "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+        "type": "git",
+        "directory": "packages/preset/persona"
+      },
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh-persona/-/dsh-persona-0.2.1-alpha.2.tgz",
+      "integrity": "sha512-Mh/E+jWtyVzVSawkV2DFaImVFtdCSDnW0wCL1CbjPzwLnBIjVj40zv91Yuct3iRw1D8pStKNfQzCmEOlu4c2FQ=="
+    },
+    {
+      "name": "@deepseek-ai/dsh-agent-instructions",
+      "version": "0.2.1-alpha.2",
+      "license": "MIT",
+      "repository": {
+        "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+        "type": "git",
+        "directory": "packages/context/agent-instructions"
+      },
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh-agent-instructions/-/dsh-agent-instructions-0.2.1-alpha.2.tgz",
+      "integrity": "sha512-iWL7LYnwmBjymDvcgVA8kGHXqeJXcDW9SLw/ZQXCQdmTSo7L0vZY7ToL2Xmyu+MfuKNubnzCqDmQ+s63NR6daw=="
+    },
+    {
+      "name": "@deepseek-ai/dsh-compaction-basic",
+      "version": "0.2.1-alpha.2",
+      "license": "MIT",
+      "repository": {
+        "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+        "type": "git",
+        "directory": "packages/compaction/compaction-basic"
+      },
+      "tarball": "https://registry.npmjs.org/@deepseek-ai/dsh-compaction-basic/-/dsh-compaction-basic-0.2.1-alpha.2.tgz",
+      "integrity": "sha512-fu1wX3UTLbOrJBOU77blejvjVIvvZcYidabOIWFZ2uqZ3n5XcZy6BbMagfVv1RxOfA+lAhW4UDq4FZExe8778w=="
+    }
+  ]
+}

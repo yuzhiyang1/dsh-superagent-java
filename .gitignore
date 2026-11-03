@@ -9,3 +9,7 @@
 *.db
 *.db-shm
 *.db-wal
+**/node_modules/
+**/playwright-report/
+**/test-results/
+*.log

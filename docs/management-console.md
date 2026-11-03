@@ -16,8 +16,8 @@
 
 | 上游能力 | Java 对应实现 | 验证入口 |
 | --- | --- | --- |
-| Overview：人工注意项、健康、24 小时流量、运行/排队 | `overview()`、`load()`，人数与目标列表共用 Engine 阶段 | `ManagementServerTest.allReadPagesUseDomainRecordsAndCorrectLoad` |
-| Source：开关、生命周期、过滤、丢弃消息 | `sources()`，过滤来自 Disposition；丢弃来自真实 Outbox | 来源页及 HTTP `GET sources` |
+| Overview：人工注意项、健康、24 小时流量、运行/排队、回复失败 | `overview()`、`load()`；judged 为近期 Trigger 去重计数；回复错误来自持久 Effect | `allReadPagesUseDomainRecordsAndCorrectLoad`、`overviewCountsJudgedTriggersAndShowsPendingReplyFailures` |
+| Source：开关、生命周期、过滤、丢弃消息 | `sources()`；区分来源自身错误、全局 setup、关闭与启动状态 | `sourceLifecyclePrioritizesOwnSetupErrorsAndThreadStagesUseDomainFacts` |
 | Trigger：订阅/评估中/最近/全部过滤 | `threads()`、按时间与 ID 稳定分页 | `GET threads` |
 | Thread：消息时间线、投递归属、退回理由、上下文、决定 | `threadDetail()`、`triggerView()` | Thread 详情与较早页 |
 | 搜索内容、ID、消息链接、#编号、GitHub URL | `search()`，Source 缓存链接也参与匹配 | `GET search?q=%2312` |
@@ -70,7 +70,15 @@ Policy、Eval、Executor、每个 Source、Pause、Deployment 各有独立 revis
 
 `VersionedSettings.save(..., "tool")` 对模型入口执行额外限制：不能改变账户、凭据环境变量名、API 目标、执行路径、prepare/blocked commands、发布与写入权限、部署限制。HTTP 面板使用可信的 `panel` 来源。来源会员同步使用 `sync` 并在远程读取前捕获旧 revision，防止覆盖同步期间的人工编辑。
 
+来源 `config.writesEnabled` 默认关闭，只能从可信面板修改。开启后会发送当前 Outbox 中等待的回复；创建 PR 还需要 Executor 的 `allowPublish`。模型工具不能自行开启来源写入。
+
 Java REST Source 的 `tokenEnvironment` 只保存环境变量名称，不保存令牌。扩展字段 `apiBase`、GitHub `botLogin`、Feishu `botId` / `appId` 用于 Java REST 连接；原版 `cli`、GitHub `pollSeconds` / `failuresBeforeError`、Feishu `readPageSize` / `linkTimeoutMs` 仍保持清晰命名。
+
+## 升级与持久通知
+
+`ConfigurationMigrations` 对 settings/prompts 使用独立 schema。迁移在一次 SQLite 事务内执行，保存旧值且只运行一次；比程序更新的 schema 会明确拒绝打开，避免旧代码覆盖新数据。旧字段和历史提示结构转换后，原历史及默认文本仍可审计。这里迁移的是 Java 状态格式，不是上游 TypeScript SQLite 文件的直接兼容读取。
+
+面板保存 settings/prompts 时，在同一事务写入合并的静默 NOTICE。历史记录反映受到策略变更影响的 Ticket，`context_delivery` 与 `notificationPending` 根据尚待处理的通知计算。模型自身工具保存不回声通知；纯提示词修改不唤醒空闲执行器，下一次真正请求模型时才使用新版本。
 
 ## Prompts：与普通字符串拼接的区别
 
@@ -83,7 +91,7 @@ Java REST Source 的 `tokenEnvironment` 只保存环境变量名称，不保存�
 
 ## 浏览器与 HTTP 验证
 
-`ManagementServerTest` 使用临时 SQLite、真实 Engine、真实 JDK HTTP 服务和 Java HttpClient，覆盖读页、错误、版本冲突、模板校验、暂停、停止、答复、人工重评、Source 同步和跨 Ticket 资源隔离。
+`ManagementServerTest` 使用临时 SQLite、真实 Engine、真实 JDK HTTP 服务和 Java HttpClient，覆盖读页、错误、版本冲突、模板校验、暂停、停止、答复、人工重评、Source 同步、跨 Ticket 隔离和完整图片资源。`ConfigurationParityTest` 另覆盖来源写入权限、独立 revision、持久重开、通知合并、历史分页、默认漂移、已移除部分和一次性迁移。
 
 `PanelFixture` 仅放在 `src/test`，创建真实领域记录但不调用外部服务，用于浏览器点击验证。它不是生产入口，也不会在生产空数据库中注入示例 Ticket。
 
@@ -95,3 +103,17 @@ java -cp '<test-classes>:<classes>:<dependencies>' \
 ```
 
 浏览器需覆盖：中文/英文导航、人工注意项跳转、打开 Thread 原文（包含 HTML 的文本不得执行）、暂停/恢复、设置变更/失败/冲突、提示词编辑/预览/历史、Back/Forward、取消破坏性确认、重复点击和移动端布局。
+
+## 第三种来源：不修改面板
+
+对照上游 `docs/008-cookbook.md`，新增 Java `SourceKind`，声明配置默认值/验证、双语字段、策略字段与动态准入行、健康项和环境变量，再注册到同一个 `SourceKinds`。组合根、`VersionedSettings` 与 SourceFactory 共享该注册表。
+
+- `source:<kind>` 自动成为独立配置块，有 revision、冲突检查、历史和模型工具限制。`panelOnlyKeys` 声明只能由本机操作人修改的字段。
+- Source/Eval 设置页由描述符生成，支持 text、number、switch、select、rows、fact、advanced，以及显示名称选择和刷新，不识别具体来源类。
+- `policyRows(config)` 决定接收范围及各准入单元是否可编辑；`validatePolicy` 验证该来源自己的身份格式。是否忽略身份大小写由种类声明。
+- 环境变量声明无论来源是否启用都显示在 Execution 设置中；实际执行值由启用来源及工单上下文提供。
+- 卸载来源种类保留配置、历史与策略，页面标记为未安装并禁止修改该 Source 块。重新安装后可继续使用。旧配置不符合新 schema 时，当前实例停用并显示默认值，原始记录不被自动覆盖。
+- `channelLink(address, config)` 提供原对话地址及双语标签，Ticket 的通道保留 source/thread/address，同时展示可点击的 HTTP(S) 链接。人工注意项可直接跳到原对话，缓存的通道链接也能搜索到对应 Thread。界面拒绝可执行 URL 和内嵌账户凭据。
+- 注册新来源不自动新增任意远端原文或图片读取权限。通用 Trigger/Thread 资源可用；自定义上下文读取仍必须由实现和宿主授权共同提供。
+
+`SourceKindManagementTest` 用第三种 Webhook queue 验证真实 HTTP 保存、错误/409、生成的字段、动态准入、工具边界、停用与卸载保留。`SourceKindsTest` 进一步通过真实本地队列文件和回复文件验证服务接入。`PanelFixture` 同时注册该种类，浏览器测试直接编辑生成的表单，而不是 mock fetch。

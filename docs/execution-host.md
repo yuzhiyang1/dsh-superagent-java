@@ -55,3 +55,38 @@ ExecutionSettings 的环境变量禁止凭据类名称。模型看到 Ticket 目
 ## 运行测试
 
 执行 `mvn test`。`JavaExecutionHostTest` 使用 loopback HTTP 模型 fixture，但文件、Git worktree、shell 输出、进程超时和取消都是真实实现，不需要模型密钥，也不会向外部账户写入。
+
+## 模型供应商与上下文
+
+`DSH_MODEL_PROVIDERS` 是 JSON 数组。例如配置两个端点时，只写凭据的环境变量名：
+
+```json
+[{"id":"deepseek","name":"DeepSeek","baseUrl":"https://api.deepseek.com/","apiKeyEnv":"DEEPSEEK_API_KEY"},{"id":"local","name":"Local server","baseUrl":"http://127.0.0.1:8000/v1/","apiKeyEnv":"LOCAL_MODEL_KEY","authRequired":false}]
+```
+
+启动默认端点仍由 OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL 设置，供应商 id 是 default。面板模型列表实际请求每个端点的 GET /models，分别显示成功目录与失败，不把配置值当作模型发现结果。公开远程端点默认要求密钥；回环地址默认不要求，authRequired 可明确指定。所选角色使用该供应商自己的凭据环境变量。
+
+Session 保存 provider、model、reasoningEffort，后续请求发送到同一选择，并把 reasoningEffort 放入 reasoning_effort。修改设置只影响之后新建的会话；已有会话和它的子 agent 保留创建时的选择。子 agent 可通过 subagent 的 provider/model/reasoning_effort 参数选择已配置模型，list_subagent_models 查询真实供应商目录。
+
+完整原始会话留在状态目录。模型请求中的长工具结果按上游 preset 的 8192 字符门槛、4096 字符头部和 1024 字符尾部剪裁。上下文接近配置窗口的 80% 时，使用原版 compaction 指令生成持久 checkpoint，并保留约 16% 的近期上下文。Java 宿主使用保守的 UTF-8 字节估算，而不是声称与各供应商的私有 tokenizer 完全相同；ExecutionSettings.contextWindowTokens 用于匹配部署模型窗口，默认 128000（常驻服务可用 `DSH_CONTEXT_WINDOW_TOKENS` 配置）。requestCompaction 请求在下一次模型步骤进行同一压缩流程。
+
+编码 persona 原文来自固定上游提交的 cordis.patch.yml，原版 compaction 文本来自 @deepseek-ai/dsh-compaction-basic@0.2.1-alpha.2。公开 npm 包下载后验证了发布的 SHA-512；没有执行包里的 JavaScript。确切来源、版本和完整性值在 [prompt-provenance.json](../third-party/deepseek-harness/prompt-provenance.json)，对应 [MIT 许可证](../third-party/deepseek-harness/LICENSE) 随项目保留。dsh-system-prompt 本身是组装注册表，并不包含另一个隐藏的长编码 prompt。
+
+工作区说明读取 AGENTS.md、CLAUDE.md 及对应 .local.md，按根目录到更具体目录的顺序组合。模型触及子目录后，下一步读取该目录的指令；新发现目录指令时，写操作会要求模型先看新上下文再重试。主会话不读取 worker 仓库说明。
+
+## 服务控制脚本
+
+完成 mvn package 后运行：
+
+```sh
+scripts/dsh-superagent start --state-dir "$PWD/state" --port 8080
+scripts/dsh-superagent status --state-dir "$PWD/state" --port 8080
+scripts/dsh-superagent stop --state-dir "$PWD/state" --port 8080
+scripts/dsh-superagent restart --state-dir "$PWD/state" --port 8080
+```
+
+脚本只定位 JAR，真正控制逻辑是 Java 的 ServiceControl。可用 DSH_SUPERAGENT_JAR 指定产物，--profile 区分默认状态目录。退出码沿用上游约定：0 正常，1 停止/重复/不可达/运行时错误，2 某个组件错误，3 等待设置。
+
+stop 写入 manually-stopped 标记。监控使用 start/restart --respect-stop 时不会违反手动停止；显式 start/restart 清除标记。停止前核对实际进程主类、完整状态目录和启动时间，不信任单独的 PID 文件，也不会强杀超时进程。
+
+独立 Java 日志 relay 将服务输出写到 state/logs，每个文件最多 5 MiB，只保留最近 20 个。ServiceControlTest 实际启动一个独立 JVM 服务、访问其管理 API、检查退出码并停止，不是仅 mock 进程列表。

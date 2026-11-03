@@ -1,60 +1,70 @@
-# dsh-superagent-java · JDK 21 学习版
+# dsh-superagent-java · Java 21 重写
 
-把 [DeepSeek 的研究原型](https://github.com/deepseek-ai/dsh-superagent-prototype) 的核心编排机制改写成 Java，方便 Java 后端开发者直接读实现，而不只是看架构图。
+用 Java 21 重写 [DeepSeek Superagent 公共原型](https://github.com/deepseek-ai/dsh-superagent-prototype)，方便 Java 开发者读源码、调试状态机和学习 Agent 工程。对齐基线固定为 [`6337fc8`](https://github.com/deepseek-ai/dsh-superagent-prototype/tree/6337fc823ce20251c8de8085948165c81aaa701e)，不是官方 DeepSeek 产品。
 
-**这是可运行的核心移植，不是完整产品复刻，也不是官方 DeepSeek 产品。** 无 Spring、无 Lombok、无反射式业务框架：Java 21 + JDBC/SQLite + Jackson。保留原项目 MIT 许可证；基线提交见 [NOTICE](NOTICE)。
+默认入口是**常驻服务**：真实来源 → 主会话评估 → 工单与执行会话 → 工具执行 → 持久回复，同时提供本机 Web 管理面板。后端全部使用 Java；前端为浏览器原生 JavaScript，无 TypeScript/Node 后端、Spring 或 Lombok。
 
-## 先运行，再读代码
+本次重写以该提交的全部公开功能为对齐目标。逐项验证记录见 [验收矩阵](docs/parity/acceptance.md)；未验收项不能视为已通过，也不把本地协议测试等同于真实账号部署验证。
 
-需要 JDK 21、Maven 3.9+。首次构建会从 Maven Central 下载依赖。
+## 启动
+
+需要 JDK 21、Maven 3.9+。首次构建需要下载 Maven 依赖。
 
 ```bash
 mvn verify
-java -jar target/dsh-superagent-java-0.1.0.jar
-# 或 mvn exec:java
+java -jar target/dsh-superagent-java-1.0.0-SNAPSHOT.jar --state-dir ./state --port 8080
+# 开发时也可：mvn exec:java
 ```
 
-不需要 API key，不访问 GitHub/飞书，不启动 shell。演示创建临时 Java 文件，真正读取并分析源码，然后通过真实 SQLite、事务 Engine、Assignment、持久化 effect 和本地 Channel 走完：
+打开终端打印的地址，默认是 `http://127.0.0.1:8080/orchestrator/`。没有模型或来源账户时也能打开面板；Deployment 会显示缺少的配置，不会假装已连接。数据保存在指定状态目录，停止后重启沿用数据库、配置版本和会话历史。
 
-1. 明确请求 → Eval → Mandate → Ticket → 执行源码分析 → Outbox 回执。
-2. 重复 Trigger 去重；人的 follow-up 恢复同一 Ticket，创建新 Assignment。
-3. 默认 `OBSERVE`：推断请求只记录 `WOULD_ACCEPT`，不启动执行。
-4. 人工 stop 撤回授权，旧 Ticket 不可恢复。
-5. 关闭并重开 SQLite 验证状态持久化。演示打印数据库位置，不删除学习证据。
-
-## 建议阅读顺序（每次只读一层）
-
-| 顺序 | 文件 | 这一步看懂什么 |
-|---|---|---|
-| 1 | [Demo.java](src/main/java/io/github/dsh/Demo.java) | 一条请求如何走完系统 |
-| 2 | [Model.java](src/main/java/io/github/dsh/core/Model.java) | Source / Trigger / Thread / Eval / Policy / Mandate / Ticket / Assignment / Subscription |
-| 3 | [Engine.java](src/main/java/io/github/dsh/core/Engine.java) | 接入、权限、状态转换；所有写入为什么走同一个入口 |
-| 4 | [SqliteStore.java](src/main/java/io/github/dsh/core/SqliteStore.java) | JDBC 事务、持久化队列、租约、重试 |
-| 5 | [OrchestratorRuntime.java](src/main/java/io/github/dsh/runtime/OrchestratorRuntime.java) | 为什么外部调用必须在事务外 |
-| 6 | [adapters](src/main/java/io/github/dsh/adapters) | 把 GitHub/飞书/模型协议隔离在边界 |
-| 7 | [测试目录](src/test/java/io/github/dsh) | 用失败场景理解约束，而不仅是 happy path |
-
-配套：[源码对照与移植范围](docs/source-map.md) · [状态与可靠性](docs/architecture.md) · [外部适配器](docs/adapters.md)。
-
-## 和原版是什么关系？
-
-已经实现核心领域与实际持久化执行链，以及 GitHub 普通 Issue/PR 评论读写、飞书文本事件转换/回复、OpenAI-compatible Chat Completions。网络适配器有本地 HTTP fixture 测试，不需要真实账号。
-
-**刻意不伪装已实现的部分：** DSH Session、任意 shell/完整 DSH 工具集、Git worktree/PR 创建、Web 管理面板、飞书长连接/历史回补、GitHub notifications/review/CI 全覆盖、原版所有管理动作与热配置，都没有等价移植。文本执行器仅生成建议；可选编码执行器能修改独立副本，但不能执行 shell、创建 PR 或声称已运行测试。详细差异见源码对照表。
-
-默认不配置来源授权；推断模式为 `OBSERVE`；外部渠道写入须单独显式开启。来源消息是上下文，不是扩大权限的指令。请只在测试仓库中验证真实集成，不要直接生产部署。
-
-## 真正的有界编码执行器（可选，需要模型 key）
-
-`CodingExecutor` 使用 OpenAI-compatible **tool calling** 循环，提供 `list_files/read_file/write_file/human_action`。每个 Ticket 拥有独立源码副本；默认禁写，显式开启后才能编辑副本。没有 shell、联网工具、自动 commit/push。它不是只输出代码建议：测试会验证工具实际改写了文件。
+模型使用支持 tool calling 的 OpenAI-compatible Chat Completions 接口。启动前配置：
 
 ```bash
-# 先设置 OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL（模型需支持工具调用）
-java -cp target/dsh-superagent-java-0.1.0.jar io.github.dsh.CodeOnce \
-  state/code.sqlite examples/java-project state/workspaces \
-  --allow-file-writes --request '为 Calculator 增加 subtract 方法，解释边界行为'
+export OPENAI_BASE_URL='https://你的模型服务/v1/'
+export OPENAI_MODEL='你的模型名称'
+# OPENAI_API_KEY 由你自己的安全环境配置注入，不写进仓库或面板
+java -jar target/dsh-superagent-java-1.0.0-SNAPSHOT.jar
 ```
 
-模型请求人工决定时产生 `WAITING` + `question`，用 `Manage ... answer TICKET_ID '答复'` 留下回复，再不带 `--request` 运行同一条 CodeOnce 命令即可继续同一工单。最多 12 轮模型调用/次执行；超限会结构化受阻，不能无限循环。模板只复制受支持源码类型，限制数量/大小，不复制隐藏文件，拒绝符号链接；不能识别普通源码、application.yml 或 config.json 内嵌的秘密。**不要把含敏感内容的目录用作模板；允许的源码内容会发送到配置的模型服务。**
+然后在面板完成以下设置：
 
-输出路径中是修改后的副本。请人工审查 diff，并在自己的受信任环境运行测试；执行器不会假称已通过它没运行过的编译或测试。更多管理命令见 [适配器文档](docs/adapters.md)。
+1. **Settings → Sources**：填写 GitHub 仓库、代理账号，或飞书应用、机器人和监听会话；选择专用账户 CLI 或 REST 连接。REST 配置保存的是令牌**环境变量名**，例如 `GITHUB_TOKEN`，不是令牌本身。
+2. **Settings → Eval**：设置允许发起工作的人员、机器人、准入表、规则和主会话模型。推断接受默认 `observe`，先看决定再切换 `auto`；允许人员的明确请求与推断请求不同。
+3. **Settings → Execution**：选择 worker 模型、并发数、工作目录和准备命令，按任务需要开启文件写入、shell、网络、子任务、发布权限。
+4. 需要来源发送回复时，显式开启该来源的 **Allow replies and publication**。开启会发送 Outbox 中已等待的消息；创建 PR 还要求执行器发布权限。
+5. **Settings → Deployment**：运行检查，确认账户与来源健康，再向机器人发送测试请求。
+
+模型供应商可通过 `DSH_MODEL_PROVIDERS` 注册多个端点，模型目录来自各供应商的真实 `/models`。面板分别选择主会话和新 worker 的模型。详见 [执行宿主](docs/execution-host.md) 与 [管理控制台](docs/management-console.md)。
+
+## 可以直接阅读和运行的部分
+
+- **领域与授权**：Trigger、Thread、Eval、Decision、不可变 Mandate、Ticket、Assignment；去重、订阅、follow-up、暂停、重试、人工问题、停止与恢复。
+- **常驻编排**：SQLite 事务、持久 Effect/Outbox、租约、退避、分类并发、人工续接优先、来源轮询、重启恢复与单实例锁。
+- **Java 执行宿主**：持久模型会话、文件工具、shell 与后台 jobs、子 agent、技能、工作树、来源资源、PR 端口和工具回执。
+- **GitHub / 飞书**：通知与观察流、评审/CI/PR 生命周期、飞书事件消费与历史补拉、上下文/图片、成员同步及回复协议。
+- **管理与提示词**：Overview、Sources、Triggers、Eval、Execution、Settings 六页；搜索、时间线和操作；完整内置 prompts/skills、角色预览、版本历史、默认更新比较、冲突保护与热加载。
+
+这些能力连接同一份服务数据，不是单独的假数据看板。原有 `Demo`、`CodeOnce` 等小入口保留作单点学习例子，不是正式服务的实现范围。
+
+## 阅读顺序
+
+每次只读一层，先跑测试再往下追调用：
+
+1. [ServerMain](src/main/java/io/github/dsh/ServerMain.java) → [OrchestratorService](src/main/java/io/github/dsh/service/OrchestratorService.java)：服务怎样组装。
+2. [Model](src/main/java/io/github/dsh/core/Model.java) → [Engine](src/main/java/io/github/dsh/core/Engine.java)：哪些状态与授权不能交给模型决定。
+3. [SqliteStore](src/main/java/io/github/dsh/core/SqliteStore.java) → [OrchestratorRuntime](src/main/java/io/github/dsh/runtime/OrchestratorRuntime.java)：事务与外部副作用怎样分开。
+4. [RouterSession](src/main/java/io/github/dsh/router/RouterSession.java) → [JavaExecutionHost](src/main/java/io/github/dsh/execution/JavaExecutionHost.java)：主会话与执行会话的职责。
+5. [sources](src/main/java/io/github/dsh/sources) → [config](src/main/java/io/github/dsh/config) → [management](src/main/java/io/github/dsh/management)：真实集成、版本化配置和面板。
+
+配套文档：[源码与上游对照](docs/source-map.md) · [状态与可靠性](docs/architecture.md) · [来源协议](docs/adapters.md) · [执行宿主](docs/execution-host.md) · [管理控制台](docs/management-console.md)。
+
+## 测试与部署边界
+
+`mvn verify` 运行领域、来源协议、路由、执行宿主、管理 HTTP 和常驻服务集成测试。`ServiceIntegrationTest` 使用本地模型协议 fixture，但真正经过服务循环、SQLite、工具写文件、报告、回复和关闭重启；`JavaExecutionHostTest` 使用真实临时 Git/worktree 和无害本地进程。测试不需要真实模型 key，也不向真实 GitHub/飞书账号发送消息。
+
+管理面板仅监听 loopback，检查 Host、Origin、专用请求头和请求大小，**不要直接暴露公网**。外部来源正文不能扩大权限。默认关闭来源写入，以及执行器写文件、shell、网络工具、子 agent 和发布；这些是可显式启用的能力，不是省略实现。
+
+**shell 不是安全沙箱。** 开启后命令以服务的系统账户运行；请使用专用账户或隔离容器，不要让服务接触个人凭据、敏感目录或未授权仓库。发送给模型的源码和上下文会离开本机。状态目录包含会话与消息，备份时同样需要保护。
+
+保留上游 MIT 许可证及提示词/技能原文版权声明，见 [LICENSE](LICENSE)、[NOTICE](NOTICE) 和 [UPSTREAM-LICENSE](src/main/resources/UPSTREAM-LICENSE)。Java 的独立 Session、HTTP 服务、CLI 与浏览器界面是宿主技术替换，不依赖安装原版 DSH 插件。
