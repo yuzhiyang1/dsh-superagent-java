@@ -42,7 +42,8 @@ class EngineTest {
     }
     @Test void inferredObserveRecordsWouldAcceptWithoutDispatching() {
         engine.receive(event("t1","issue1","alice",true,false)); Evaluation e = engine.evaluateDue().getFirst();
-        assertEquals(DecisionKind.WOULD_ACCEPT,engine.decide(e.id(),Outcome.accept("a","read",Set.of("fix-ci"))).kind());
+        assertThrows(IllegalStateException.class,() -> engine.decide(e.id(),Outcome.accept("a","read",Set.of("fix-ci"))));
+        assertEquals(DecisionKind.IGNORE,engine.decide(e.id(),new Outcome(DecisionKind.IGNORE,null,null,Set.of(),"observed",null,null,null,null,Map.of("would_accept",true))).kind());
         assertTrue(engine.tickets().isEmpty()); assertEquals(0,store.effectCount());
     }
     @Test void inferredAutoRequiresEnabledRulesAndOffRejectsBots() {
@@ -116,7 +117,7 @@ class EngineTest {
         String first = accept("a","a"), second = accept("b","b"); engine.followThread(second,new ThreadRef("local","a"),false);
         engine.receive(event("follow","a","alice",true,false)); assertFalse(engine.handback(first,"follow","not my scope"));
         assertTrue(engine.evaluateDue().isEmpty()); assertTrue(engine.handback(second,"follow","out of scope"));
-        assertFalse(engine.handback(second,"follow","again")); assertEquals(1,engine.evaluateDue().size());
+        assertThrows(IllegalStateException.class,() -> engine.handback(second,"follow","again")); assertEquals(1,engine.evaluateDue().size());
     }
     @Test void unreadFollowupReleasedOnFinishButAcknowledgedFollowupNotReleased() {
         String id = accept("a","a"); engine.receive(event("follow","a","alice",true,false));
@@ -175,6 +176,7 @@ class EngineTest {
     }
     @Test void expiredEvalCannotAcceptEvenWithoutSchedulerTick() {
         engine.receive(event("a","a","alice",true,true)); Evaluation evaluation = engine.evaluateDue().getFirst();
+        engine.candidateDelivered(evaluation.id());
         Engine later = new Engine(store,Clock.offset(clock,Duration.ofMinutes(3)));
         assertEquals(DecisionKind.UNAVAILABLE,later.decide(evaluation.id(),Outcome.accept("a","read",Set.of())).kind());
         assertTrue(engine.tickets().isEmpty());

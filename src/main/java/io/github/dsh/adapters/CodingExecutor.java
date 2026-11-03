@@ -15,6 +15,30 @@ import java.util.concurrent.ConcurrentHashMap;
  * 文件权限由 Java 检查，不依赖提示词。会话在每轮后落盘，WAITING 后可消费新增 Input 继续。
  */
 public final class CodingExecutor implements Executor {
+    private io.github.dsh.execution.JavaExecutionHost host;
+    /** 完整 Java 宿主入口。旧构造器仅保留为向后兼容的严格文件工具配置。 */
+    public CodingExecutor(URI apiBase, String apiKey, String model, io.github.dsh.execution.ExecutionSettings settings) throws IOException {
+        this.http = null; this.model = model; this.template = null; this.root = settings.workspaceRoot;
+        this.allowWrites = settings.allowWrites; this.maxSteps = settings.maxSteps;
+        this.host = new io.github.dsh.execution.JavaExecutionHost(apiBase, apiKey, model, settings);
+    }
+    public void reconfigure(String model, io.github.dsh.execution.ExecutionSettings settings) throws IOException {
+        if (host == null) throw new IllegalStateException("Legacy constructor cannot be reconfigured; use full host constructor");
+        host.reconfigure(model, settings);
+    }
+    public void reconfigure(io.github.dsh.execution.ExecutionSettings settings) throws IOException {
+        if (host == null) throw new IllegalStateException("Legacy constructor cannot be reconfigured");
+        host.reconfigure(settings);
+    }
+    @Override public void setContext(Executor.Context context) { if (host != null) host.setContext(context); }
+    @Override public boolean deliver(Ticket t, Assignment a, List<Input> inputs) throws Exception { return host != null && host.deliver(t,a,inputs); }
+    @Override public Executor.BackgroundState backgroundState(String id) { return host == null ? Executor.super.backgroundState(id) : host.backgroundState(id); }
+    @Override public List<Executor.Event> pollEvents() { return host == null ? List.of() : host.pollEvents(); }
+    @Override public void acknowledgeEvent(String id) throws Exception { if (host != null) host.acknowledgeEvent(id); }
+    @Override public Set<String> consumedInputIds(String id) { return host == null ? Set.of() : host.consumedInputIds(id); }
+    @Override public boolean tracksInputHistory() { return host != null; }
+    @Override public Map<String,Object> sessionView(String id) throws Exception { return host == null ? Map.of() : host.sessionView(id); }
+    @Override public void close() throws Exception { if (host != null) host.close(); }
     private static final int MAX_FILE_BYTES = 64 * 1024, MAX_FILES = 256, MAX_TOTAL_BYTES = 4 * 1024 * 1024;
     private static final int MAX_SESSION_BYTES = 1024 * 1024, MAX_TOOL_CALLS = 8;
     private static final Set<String> SOURCE_EXTENSIONS = Set.of("java", "xml", "md", "txt", "json", "yaml", "yml", "gradle", "kts");
@@ -36,15 +60,16 @@ public final class CodingExecutor implements Executor {
         if (this.root.startsWith(this.template) || this.template.startsWith(this.root)) throw new IOException("Template and workspaces must be disjoint directories");
         Files.createDirectories(root);
     }
-    public Path workspace(String ticketId) { return root.resolve("ticket-" + AdapterChannelSender.deliveryId(ticketId)); }
+    public Path workspace(String ticketId) { if (host != null) return host.workspace(ticketId); return root.resolve("ticket-" + AdapterChannelSender.deliveryId(ticketId)); }
 
-    @Override public void stop(String ticketId, String assignmentId) { stoppedAssignments.add(assignmentId); }
+    @Override public void stop(String ticketId, String assignmentId) { if (host != null) { try { host.stop(ticketId, assignmentId); } catch (Exception e) { if (e instanceof InterruptedException) Thread.currentThread().interrupt(); throw new IllegalStateException("Stopping worker failed",e); } return; } stoppedAssignments.add(assignmentId); }
 
     @Override public Report execute(Ticket ticket, Assignment assignment) throws Exception {
         return execute(ticket, assignment, () -> true);
     }
-    @Override public synchronized Report execute(Ticket ticket, Assignment assignment,
+    @Override public Report execute(Ticket ticket, Assignment assignment,
                                                  java.util.function.BooleanSupplier stillAuthorized) throws Exception {
+        if (host != null) return host.execute(ticket, assignment, stillAuthorized);
         if (!stillAuthorized.getAsBoolean()) return new Report(ReportKind.DROPPED, "执行授权已终止");
         if (ticket.status != TicketStatus.OPEN || ticket.stopped) throw new IllegalStateException("Ticket not open");
         if (!ticket.id.equals(assignment.ticketId)) throw new IllegalArgumentException("Assignment mismatch");

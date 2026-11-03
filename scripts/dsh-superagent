@@ -1,0 +1,15 @@
+#!/bin/sh
+# Java 实现服务控制；只用此 shell 文件定位项目 JAR。
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+JAR=${DSH_SUPERAGENT_JAR:-}
+if [ -z "$JAR" ]; then
+  JAR=$(find "$ROOT/target" -maxdepth 1 -name 'dsh-superagent-java-*.jar' ! -name 'original-*' -print 2>/dev/null | sort | tail -n 1)
+fi
+if [ -z "$JAR" ] || [ ! -f "$JAR" ]; then
+  printf '%s\n' 'Build the service first: mvn package. Or set DSH_SUPERAGENT_JAR.' >&2
+  exit 1
+fi
+JAVA=${JAVA_HOME:+$JAVA_HOME/bin/}java
+cd "$ROOT"
+exec "$JAVA" -cp "$JAR" io.github.dsh.service.ServiceControl "$@" --jar "$JAR"

@@ -14,7 +14,7 @@ public final class SourceBridge {
         ThreadRef thread = new ThreadRef(event.sourceId(), threadId);
         Channel channel = event.replyAddress().isEmpty() ? null : new Channel(event.sourceId(), thread.key(), event.replyAddress());
         return new Trigger(event.eventId(), event.sourceId(), List.of(thread), event.actor(), !event.bot(),
-                event.addressed(), receiveAll, scope, event.at().toString(), event.text(), channel);
+                event.addressed(), receiveAll, scope, event.at().toString(), event.text(), channel, event.metadata(), event.url(), event.replyTo());
     }
     /** 批次全部写入和游标推进原子提交；校验失败不会写入前半批。 */
     public static void receiveBatch(Engine engine, List<ReceivedEvent> events, String sourceId, String cursor,

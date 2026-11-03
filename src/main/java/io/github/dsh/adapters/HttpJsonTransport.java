@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.http.*;
 import java.time.Duration;
 import java.util.Map;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** 小而明确的 HTTP 边界：不跟随重定向，不输出密钥/响应正文，重试交给持久化 effect 队列。 */
@@ -27,6 +28,19 @@ public final class HttpJsonTransport {
     }
     public JsonNode request(String method, String path, Object body, Map<String, String> headers)
             throws IOException, InterruptedException {
+        Response response = requestDetailed(method, path, body, headers);
+        return response.body();
+    }
+    public record Response(int status, Map<String,List<String>> headers, JsonNode body) {
+        public String header(String key) { return headers.entrySet().stream().filter(e -> e.getKey().equalsIgnoreCase(key)).flatMap(e -> e.getValue().stream()).findFirst().orElse(""); }
+    }
+    public record BinaryResponse(int status, Map<String,List<String>> headers, byte[] bytes) {}
+    public Response requestDetailed(String method, String path, Object body, Map<String,String> headers) throws IOException, InterruptedException {
+        BinaryResponse response = requestBytes(method,path,body,headers,MAX_BYTES);
+        return new Response(response.status(),response.headers(),response.bytes().length == 0 ? JSON.nullNode() : JSON.readTree(response.bytes()));
+    }
+    public BinaryResponse requestBytes(String method,String path,Object body,Map<String,String> headers,int maxBytes) throws IOException,InterruptedException {
+        if (maxBytes < 1 || maxBytes > 20 * 1024 * 1024) throw new IllegalArgumentException("Body limit must be 1..20MiB");
         if (path.startsWith("/") || path.contains("..") || path.contains("://")) throw new IllegalArgumentException("Relative API path required");
         var builder = HttpRequest.newBuilder(base.resolve(path)).timeout(Duration.ofSeconds(60))
                 .header("Accept", "application/json");
@@ -38,6 +52,7 @@ public final class HttpJsonTransport {
         // ofByteArray 在 headers 到达前不能限制体积；在流上读取上限，超限即关闭。
         var response = client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
         try (var stream = response.body()) {
+            if (response.statusCode() == 304) return new BinaryResponse(304,response.headers().map(),new byte[0]);
             if (response.statusCode() < 200 || response.statusCode() >= 300)
                 throw new ApiException(response.statusCode());
             // HttpRequest.timeout 不足以约束 ofInputStream 后续读取，另设流读取截止。
@@ -51,16 +66,16 @@ public final class HttpJsonTransport {
                   catch (IOException ignored) { /* 主读取路径报告错误。 */ }
             });
             try {
-                byte[] bytes = stream.readNBytes(MAX_BYTES + 1);
+                byte[] bytes = stream.readNBytes(maxBytes + 1);
                 if (timedOut.get()) throw new IOException("API response body timed out");
-                if (bytes.length > MAX_BYTES) throw new IOException("API response exceeds 2 MiB");
-                return bytes.length == 0 ? JSON.nullNode() : JSON.readTree(bytes);
+                if (bytes.length > maxBytes) throw new IOException(maxBytes == MAX_BYTES ? "API response exceeds 2 MiB" : "API response exceeds configured byte limit");
+                return new BinaryResponse(response.statusCode(),response.headers().map(),bytes);
             } finally { watchdog.interrupt(); }
         }
     }
     public static final class ApiException extends IOException {
         private final int status;
-        ApiException(int status) { super("Remote API returned HTTP " + status); this.status = status; }
+        public ApiException(int status) { super("Remote API returned HTTP " + status); this.status = status; }
         public int status() { return status; }
         public boolean retryable() { return status == 408 || status == 429 || status >= 500; }
     }

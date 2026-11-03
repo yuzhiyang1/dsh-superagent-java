@@ -30,7 +30,7 @@ class RuntimeTest {
     @Test void acceptedTicketRunsAndResultGoesThroughDurableOutbox() {
         String id = createTicket(); List<OutboxMessage> sent = new ArrayList<>(); AtomicInteger executions = new AtomicInteger();
         OrchestratorRuntime runtime = new OrchestratorRuntime(engine,store,(ticket,a) -> { executions.incrementAndGet(); return new Report(ReportKind.READY,"done"); }, message -> { sent.add(message); return "receipt"; },clock);
-        assertEquals(2,runtime.drain(20)); assertEquals(1,executions.get()); assertEquals(1,sent.size());
+        assertEquals(3,runtime.drain(20)); assertEquals(1,executions.get()); assertEquals(1,sent.size());
         assertEquals(TicketStatus.ENDED,engine.ticket(id).status); assertEquals("sent",engine.outboxMessage(sent.getFirst().id()).status());
         assertEquals(0,runtime.drain(20));
     }
@@ -44,14 +44,14 @@ class RuntimeTest {
     }
     @Test void externalFailureBacksOffWithoutLosingEffectOrEndingTicket() {
         String id = createTicket(); AtomicInteger attempts = new AtomicInteger();
-        OrchestratorRuntime runtime = new OrchestratorRuntime(engine,store,(ticket,a) -> { if (attempts.getAndIncrement() == 0) throw new java.io.IOException("private error"); return new Report(ReportKind.READY,"done"); },message -> "receipt",clock);
+        OrchestratorRuntime runtime = new OrchestratorRuntime(engine,store,(ticket,a) -> { if (attempts.getAndIncrement() == 0) throw new java.net.ConnectException("private error"); return new Report(ReportKind.READY,"done"); },message -> "receipt",clock);
         assertEquals(1,runtime.drain(20)); assertEquals(TicketStatus.OPEN,engine.ticket(id).status); assertEquals(0,runtime.drain(20));
-        clock.time += 1000; assertEquals(2,runtime.drain(20)); assertEquals(TicketStatus.ENDED,engine.ticket(id).status); assertEquals(2,attempts.get());
+        clock.time += 2000; assertEquals(3,runtime.drain(20)); assertEquals(TicketStatus.ENDED,engine.ticket(id).status); assertEquals(2,attempts.get());
     }
     @Test void channelFailureRetainsPendingReceiptThenRetries() {
         createTicket(); AtomicInteger sends = new AtomicInteger();
         OrchestratorRuntime runtime = new OrchestratorRuntime(engine,store,(ticket,a) -> new Report(ReportKind.READY,"done"),message -> { if (sends.getAndIncrement() == 0) throw new java.io.IOException("offline"); return "receipt"; },clock);
-        runtime.drain(20); assertEquals(1,store.effectCount()); clock.time += 1000; runtime.drain(20); assertEquals(2,sends.get()); assertEquals(0,store.effectCount());
+        runtime.drain(20); assertEquals(1,store.effectCount()); clock.time += 5000; runtime.drain(20); assertEquals(2,sends.get()); assertEquals(0,store.effectCount());
     }
     @Test void stoppedTicketNeverExecutesStaleStartEffect() {
         String id = createTicket(); engine.stopTicket(id); AtomicInteger calls = new AtomicInteger();
@@ -70,7 +70,7 @@ class RuntimeTest {
     }
     @Test void startConsumesQueuedInputsOnceIncludingPolicyNotes() {
         createTicket();
-        engine.setPolicy(new Policy("v2",AcceptMode.OBSERVE,Map.of("local",new SourcePolicy(Set.of("alice"),Set.of(),Map.of())),Set.of()));
+        engine.setPolicy(new Policy("v2",AcceptMode.OBSERVE,Map.of("local",new SourcePolicy(Set.of(),Set.of(),Map.of())),Set.of()));
         AtomicInteger calls = new AtomicInteger();
         OrchestratorRuntime runtime = new OrchestratorRuntime(engine,store,(ticket,a) -> { calls.incrementAndGet(); return new Report(ReportKind.WAITING,"waiting"); },message -> "receipt",clock);
         runtime.drain(20); assertEquals(1,calls.get());
@@ -87,8 +87,20 @@ class RuntimeTest {
         engine.receive(new Trigger("follow","local",List.of(new ThreadRef("local","thread")),"alice",true,false,true,"issue",clock.instant().toString(),"continue",null));
         runtime.drain(20);
         assertFalse(engine.ticket(id).inputs.stream().filter(input -> "follow".equals(input.triggerId)).findFirst().orElseThrow().acknowledged);
-        clock.time += 1000; runtime.drain(20); assertEquals(3,calls.get());
+        clock.time += 2000; runtime.drain(20); assertEquals(3,calls.get());
         assertTrue(engine.ticket(id).inputs.stream().filter(input -> "follow".equals(input.triggerId)).findFirst().orElseThrow().acknowledged);
+    }
+
+    @Test void nonTransientLaunchFailureWaitsForManualRetryRatherThanLooping() {
+        String id=createTicket(); AtomicInteger calls=new AtomicInteger();
+        OrchestratorRuntime runtime=new OrchestratorRuntime(engine,store,(ticket,a) -> {
+            calls.incrementAndGet(); throw new IllegalArgumentException("bad launch configuration");
+        },message -> "receipt",clock);
+        runtime.drain(20); clock.time+=60_000; runtime.drain(20);
+        assertEquals(1,calls.get()); assertEquals(ReportKind.FAILED,engine.ticket(id).latestAssignment().report.kind());
+        assertTrue(engine.executionHeld(id)); assertEquals(TicketStatus.OPEN,engine.ticket(id).status);
+        String previous=engine.ticket(id).latestAssignment().id; engine.retryTicket(id); assertNotEquals(previous,engine.ticket(id).latestAssignment().id);
+        runtime.close();
     }
 
 }

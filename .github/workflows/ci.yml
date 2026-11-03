@@ -13,4 +13,4 @@ jobs:
           java-version: '21'
           cache: maven
       - run: mvn --batch-mode verify
-      - run: java -jar target/dsh-superagent-java-0.1.0.jar
+      - run: java -jar target/dsh-superagent-java-1.0.0-SNAPSHOT.jar --help

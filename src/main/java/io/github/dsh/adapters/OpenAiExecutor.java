@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.*;
 
-/** 用可移植 Chat Completions 替代 DSH Session。只生成文本，不提供 shell、文件或外部写工具。 */
+/** OpenAI 兼容模型协议边界。工具执行由 JavaExecutionHost 管理，不把模型输出当作执行结果。 */
 public final class OpenAiExecutor {
     public record Message(String role, String content) {
         public Message {
@@ -19,6 +19,13 @@ public final class OpenAiExecutor {
         if (model == null || model.isBlank()) throw new IllegalArgumentException("Model required");
         this.model = model;
     }
+    public com.fasterxml.jackson.databind.JsonNode chat(List<Map<String,Object>> messages, List<Map<String,Object>> tools, String selectedModel) throws IOException, InterruptedException {
+        Map<String,Object> body = new LinkedHashMap<>();
+        body.put("model", selectedModel == null || selectedModel.isBlank() ? model : selectedModel); body.put("messages", messages); body.put("stream", false);
+        if (!tools.isEmpty()) { body.put("tools", tools); body.put("tool_choice", "auto"); }
+        return http.request("POST", "chat/completions", body, Map.of());
+    }
+    public String model() { return model; }
     public String complete(String scope, List<Message> context) throws IOException, InterruptedException {
         if (scope == null || scope.isBlank()) throw new IllegalArgumentException("Mandate scope required");
         List<Map<String, String>> messages = new ArrayList<>();
