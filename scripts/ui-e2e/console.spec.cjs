@@ -21,7 +21,14 @@ test.describe('Java console functional acceptance',()=>{
     await go(page,'source');await page.getByText('Filtered Triggers · 1',{exact:true}).click();await expect(page.getByText('Not an allowed sender',{exact:true})).toBeVisible();
   });
   test('pause and resume persist through reload without losing tickets',async({page})=>{
-    await go(page,'execution');await page.getByRole('button',{name:'Pause processing',exact:true}).click();await expect(page.getByRole('button',{name:'Resume processing',exact:true})).toBeVisible();expect((await get(page,'state')).paused).toBe(true);await page.reload();await expect(page.getByRole('button',{name:'Resume processing',exact:true})).toBeVisible();await page.getByRole('button',{name:'Resume processing',exact:true}).click();await expect(page.getByRole('button',{name:'Pause processing',exact:true})).toBeVisible();expect((await get(page,'tickets?state=open')).items).toHaveLength(4);
+    await go(page,'execution');
+    const directBooleanText=()=>page.locator('#content').evaluate(root=>[...root.childNodes].filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent.trim()).filter(t=>t==='false'||t==='true'));
+    expect(await directBooleanText()).toEqual([]);
+    await page.getByRole('button',{name:'Pause processing',exact:true}).click();
+    await expect(page.getByText('Processing is paused. Sources continue recording, but evaluation, launches, and delivery wait.',{exact:true})).toBeVisible();
+await expect(page.getByRole('button',{name:'Resume processing',exact:true})).toBeVisible();expect((await get(page,'state')).paused).toBe(true);await page.reload();await expect(page.getByRole('button',{name:'Resume processing',exact:true})).toBeVisible();await page.getByRole('button',{name:'Resume processing',exact:true}).click();await expect(page.getByRole('button',{name:'Pause processing',exact:true})).toBeVisible();expect((await get(page,'tickets?state=open')).items).toHaveLength(4);
+    expect(await directBooleanText()).toEqual([]);
+    await expect(page.getByText('Processing is paused. Sources continue recording, but evaluation, launches, and delivery wait.',{exact:true})).toHaveCount(0);
   });
   test('two stale tabs preserve edits and require explicit conflict reconciliation',async({page,context})=>{
     await go(page,'settings?group=execution');const second=await context.newPage();await second.addInitScript(()=>localStorage.setItem('dsh.language','en'));await go(second,'settings?group=execution');
