@@ -4,7 +4,7 @@ async function get(page,path){const response=await page.request.get(api+path,{he
 async function go(page,route){await page.goto('/orchestrator/#'+route);await expect(page.locator('h1')).toBeVisible();await expect(page.getByText('Unable to load page',{exact:true})).toHaveCount(0);}
 async function save(page,name,path){await Promise.all([page.waitForResponse(r=>decodeURIComponent(r.url()).includes('/orchestrator/api/'+path)&&r.request().method()==='PUT'),page.getByRole('button',{name,exact:true}).click()]);}
 async function ticket(page,number){return (await get(page,'tickets?state=open')).items.find(t=>t.title.endsWith('#'+number));}
-test.describe.serial('Java console functional acceptance',()=>{
+test.describe('Java console functional acceptance',()=>{
   test.beforeEach(async({page})=>{await page.addInitScript(()=>localStorage.setItem('dsh.language','en'));page.on('dialog',dialog=>dialog.accept());});
   test.afterEach(async({page},info)=>{await page.screenshot({path:info.outputPath('screen.png'),fullPage:true});});
   test('all six real tabs load, English/Chinese switch and browser navigation',async({page})=>{

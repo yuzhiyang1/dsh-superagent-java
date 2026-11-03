@@ -67,6 +67,29 @@ public final class PanelFixture {
             io.github.dsh.sources.SourceKinds.builtins()
                 .register(SourceKindManagementTest.queueKind()));
     PromptService prompts = new PromptService(store, settings, host);
+    seed(engine, settings);
+    ManagementServer server =
+        new ManagementServer(
+            engine,
+            store,
+            settings,
+            prompts,
+            host,
+            args.length > 1 ? Integer.parseInt(args[1]) : 3083);
+    server.start();
+    System.out.println(server.url());
+    Runtime.getRuntime()
+        .addShutdownHook(
+            new Thread(
+                () -> {
+                  server.close();
+                  store.close();
+                }));
+    new CountDownLatch(1).await();
+  }
+
+  static void seed(Engine engine, VersionedSettings settings) {
+    engine.configureSourceScope("github", new SourceScope(true, Set.of("issues"), "fixture-agent"));
     if (engine.tickets().isEmpty()) {
       settings.save(
           "policy",
@@ -136,28 +159,10 @@ public final class PanelFixture {
               true,
               true,
               true,
-              "issues",
+              "outside",
               Instant.now().toString(),
               "Not an allowed sender",
               null));
     }
-    ManagementServer server =
-        new ManagementServer(
-            engine,
-            store,
-            settings,
-            prompts,
-            host,
-            args.length > 1 ? Integer.parseInt(args[1]) : 3083);
-    server.start();
-    System.out.println(server.url());
-    Runtime.getRuntime()
-        .addShutdownHook(
-            new Thread(
-                () -> {
-                  server.close();
-                  store.close();
-                }));
-    new CountDownLatch(1).await();
   }
 }
