@@ -265,7 +265,12 @@ public final class OrchestratorRuntime implements AutoCloseable {
         release(effect);
         return;
       } // 停机取消不是任务失败；保留 intent 给重启恢复。
-      String error = failure.getClass().getSimpleName();
+      // Only preparation failures opt in to useful, bounded, redacted command diagnostics.
+      // Keep unrelated exception messages hidden: they may contain remote payloads or secrets.
+      String error =
+          failure instanceof io.github.dsh.execution.JavaExecutionHost.PrepareFailed prepare
+              ? prepare.diagnostic()
+              : failure.getClass().getSimpleName();
       long initial = effect.kind() == EffectKind.REPLY ? 5000 : 2000,
           max = effect.kind() == EffectKind.REPLY ? 300000 : 60000;
       if (effect.kind() == EffectKind.START
@@ -375,13 +380,39 @@ public final class OrchestratorRuntime implements AutoCloseable {
     }
     if (engine.executionHeld(ticketId) && !statusInput(effect, ticket))
       throw new Later("executor held");
-    if (assignment.status == AssignmentStatus.PENDING)
-      engine.assignmentStarted(ticketId, assignment.id);
-    engine.inputsDelivered(ticketId, assignment.id, inputs.stream().map(i -> i.id).toList());
     if (!activeTurns.add(ticketId)) throw new Later("ticket turn already active");
+    var admittedInputs = new java.util.concurrent.atomic.AtomicReference<List<Input>>(inputs);
     Report report;
     try {
-      report = executor.execute(ticket, assignment, () -> authorized(ticketId, assignment.id));
+      report =
+          executor.execute(
+              ticket,
+              assignment,
+              () -> authorized(ticketId, assignment.id),
+              () -> {
+                Ticket admitted =
+                    store.atomic(
+                        () -> {
+                          if (engine.processing().paused() || !authorized(ticketId, assignment.id))
+                            return null;
+                          Ticket current = engine.ticket(ticketId);
+                          if (current.latestAssignment().status == AssignmentStatus.PENDING)
+                            engine.assignmentStarted(ticketId, assignment.id);
+                          List<Input> freshInputs =
+                              current.inputs.stream()
+                                  .filter(i -> !i.acknowledged && i.readAt == null && !i.held)
+                                  .toList();
+                          admittedInputs.set(freshInputs);
+                          engine.inputsDelivered(
+                              ticketId,
+                              assignment.id,
+                              freshInputs.stream().map(i -> i.id).toList());
+                          return engine.ticket(ticketId);
+                        });
+                if (admitted == null)
+                  throw new Later("Processing paused or launch authorization changed");
+                return admitted;
+              });
     } finally {
       activeTurns.remove(ticketId);
     }
@@ -391,7 +422,7 @@ public final class OrchestratorRuntime implements AutoCloseable {
           if (executor.tracksInputHistory())
             engine.inputsRead(
                 ticketId, assignment.id, new ArrayList<>(executor.consumedInputIds(ticketId)));
-          else for (Input input : inputs) engine.acknowledgeInput(ticketId, input.id);
+          else for (Input input : admittedInputs.get()) engine.acknowledgeInput(ticketId, input.id);
           engine.report(ticketId, assignment.id, report);
           if (automaticReplies) replyFallback(ticket, assignment, report);
           return null;

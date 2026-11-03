@@ -194,6 +194,13 @@ public final class JavaExecutionHost implements Executor {
   @Override
   public Report execute(Ticket ticket, Assignment assignment, BooleanSupplier authorized)
       throws Exception {
+    return execute(ticket, assignment, authorized, () -> ticket);
+  }
+
+  @Override
+  public Report execute(
+      Ticket ticket, Assignment assignment, BooleanSupplier authorized, BeforeTurn beforeTurn)
+      throws Exception {
     validate(ticket, assignment);
     if (closing || !authorized.getAsBoolean())
       return new Report(ReportKind.DROPPED, "Execution authorization ended");
@@ -202,7 +209,9 @@ public final class JavaExecutionHost implements Executor {
     String id = workerId(ticket.id);
     ReentrantLock lock = locks.computeIfAbsent(id, k -> new ReentrantLock());
     if (!lock.tryLock()) {
-      deliver(ticket, assignment, ticket.inputs);
+      Ticket current = beforeTurn.check();
+      ticketSnapshots.put(current.id, current);
+      deliver(current, assignment, current.inputs);
       return new Report(ReportKind.PROGRESS, "New input delivered to the active worker session");
     }
     try {
@@ -214,11 +223,15 @@ public final class JavaExecutionHost implements Executor {
         handedOff.remove(id);
         store.save(s);
       }
-      deliver(ticket, assignment, ticket.inputs);
+      // Preparation may have taken minutes. Recheck pause and assignment ownership here;
+      // a pause must hold a new turn, without interrupting one that already started.
+      Ticket current = beforeTurn.check();
+      ticketSnapshots.put(current.id, current);
+      deliver(current, assignment, current.inputs);
       if (s.messages.isEmpty() && s.inbox.isEmpty()) store.deliver(s, "ticket-title", ticket.title);
       handedOff.remove(id);
       s.handedOff = false;
-      return run(s, ticket, assignment);
+      return run(s, current, assignment);
     } finally {
       activeThreads.remove(id, Thread.currentThread());
       lock.unlock();
@@ -317,7 +330,10 @@ public final class JavaExecutionHost implements Executor {
             if (files.findAny().isEmpty()) Files.delete(dir);
           }
         }
-        throw new PrepareFailed("Prepare command failed: " + j.output);
+        Map<String, String> diagnosticEnvironment = new HashMap<>(System.getenv());
+        diagnosticEnvironment.putAll(env);
+        throw new PrepareFailed(
+            "Prepare command failed (exit " + j.exitCode + "): " + j.output, diagnosticEnvironment);
       }
       if (!Files.isDirectory(dir))
         throw new PrepareFailed("Prepare command did not create the ticket directory");
@@ -330,8 +346,19 @@ public final class JavaExecutionHost implements Executor {
   }
 
   public static final class PrepareFailed extends IOException {
+    private final String diagnostic;
+
     public PrepareFailed(String message) {
+      this(message, System.getenv());
+    }
+
+    private PrepareFailed(String message, Map<String, String> environment) {
       super(message);
+      diagnostic = PrepareDiagnostics.sanitize(message, environment);
+    }
+
+    public String diagnostic() {
+      return diagnostic;
     }
   }
 

@@ -15,6 +15,25 @@ public interface Executor extends AutoCloseable {
     return execute(ticket, assignment);
   }
 
+  /**
+   * Checked once after preparation, immediately before a new turn accepts its inputs. Returns the
+   * current ticket snapshot so inputs arriving during preparation are delivered in that turn.
+   */
+  @FunctionalInterface
+  interface BeforeTurn {
+    Ticket check() throws Exception;
+  }
+
+  default Report execute(
+      Ticket ticket,
+      Assignment assignment,
+      java.util.function.BooleanSupplier stillAuthorized,
+      BeforeTurn beforeTurn)
+      throws Exception {
+    Ticket current = beforeTurn.check();
+    return execute(current, assignment, stillAuthorized);
+  }
+
   default void setContext(Context context) {}
 
   /** 对运行中的会话投递，不等模型结束。true 表示宿主已持久化；false 交给普通 execute。 */

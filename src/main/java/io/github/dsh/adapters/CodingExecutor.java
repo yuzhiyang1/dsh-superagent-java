@@ -168,7 +168,17 @@ public final class CodingExecutor implements Executor {
   public Report execute(
       Ticket ticket, Assignment assignment, java.util.function.BooleanSupplier stillAuthorized)
       throws Exception {
-    if (host != null) return host.execute(ticket, assignment, stillAuthorized);
+    return execute(ticket, assignment, stillAuthorized, () -> ticket);
+  }
+
+  @Override
+  public Report execute(
+      Ticket ticket,
+      Assignment assignment,
+      java.util.function.BooleanSupplier stillAuthorized,
+      BeforeTurn beforeTurn)
+      throws Exception {
+    if (host != null) return host.execute(ticket, assignment, stillAuthorized, beforeTurn);
     if (!stillAuthorized.getAsBoolean()) return new Report(ReportKind.DROPPED, "执行授权已终止");
     if (ticket.status != TicketStatus.OPEN || ticket.stopped)
       throw new IllegalStateException("Ticket not open");
@@ -193,6 +203,7 @@ public final class CodingExecutor implements Executor {
                   + "需要人的决定时调用 human_action；完成时说明改动与未验证项。写权限："
                   + allowWrites));
     }
+    ticket = beforeTurn.check();
     for (Input input : ticket.inputs)
       if (session.inputIds.add(input.id))
         session.messages.add(
